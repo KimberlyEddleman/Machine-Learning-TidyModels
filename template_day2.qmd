@@ -1,0 +1,858 @@
+---
+title: "5 - Feature engineering - Classwork"
+subtitle: "Machine learning with tidymodels"
+editor_options: 
+  chunk_output_type: console
+---
+
+Working with predictors- model may require a different format (dummy variables) or need certain data qualities (same units), outcome is better predicted when one or more columns are transformed (feature engineering)
+
+Feature engineering- feature as some representation of a predictor
+Interactions, polynomial expansions, PCA feature extraction
+Ex: Dates, re-engineered as days since a reference date, day of week, month, year, indicator for holidays, etc
+
+
+data preprocessing- allow your model to fit
+feature engineering- help the model to the least work to predict the outcome
+
+
+We recommend restarting R between each slide deck!
+
+## Case study
+
+```{r}
+library(tidymodels)
+library(ongoal)
+
+tidymodels_prefer()
+ggplot2::theme_set(ggplot2::theme_bw())
+
+glimpse(season_2015)
+```
+
+## Splitting the NHL data
+
+```{r}
+set.seed(23)
+nhl_split <- initial_split(season_2015, prop = 3/4)
+nhl_split
+
+nhl_train_and_val <- training(nhl_split)
+nhl_test  <- testing(nhl_split)
+```
+
+## Validation split
+
+Since there are a lot of observations, we'll use a validation set.
+
+```{r}
+set.seed(234)
+nhl_val <- validation_split(nhl_train_and_val, prop = 0.80)
+nhl_val
+```
+
+## Your turn
+
+Let's explore the training set data.
+
+Use the function `plot_nhl_shots()` for nice spatial plots of the data.
+
+```{r}
+nhl_train <- analysis(nhl_val$splits[[1]])
+
+set.seed(100)
+nhl_train %>% 
+  sample_n(200) %>%
+  plot_nhl_shots(emphasis = on_goal)
+
+
+set.seed(100)
+nhl_train %>% 
+  sample_n(200) %>%
+  filter(on_goal=="yes")%>%
+  plot_nhl_shots(emphasis = position)
+
+nhl_train %>% 
+  sample_n(200) %>%
+  filter(on_goal=="no")%>%
+  plot_nhl_shots(emphasis = position)
+
+ggplot(nhl_train)+geom_bar(aes(offense_goal_diff, fill=on_goal))
+ggplot(nhl_train)+geom_boxplot(aes(offense_goal_diff, fill=on_goal))
+
+ggplot(nhl_train)+geom_point(aes(game_time,coord_x, color=on_goal))
+ggplot(nhl_train)+geom_point(aes(coord_y,coord_x, color=on_goal))
+
+ggplot(nhl_train)+geom_point(aes(coord_y,coord_x, color=on_goal))+facet_wrap(~strength)
+
+table(nhl_train$position,nhl_train$on_goal)
+
+nhl_train%>%group_by(position,on_goal)%>%tally()
+
+nhl_train%>% ggplot(aes(x=position,fill=on_goal))+geom_bar()
+
+
+nhl_train%>% ggplot(aes(x=strength))+geom_bar()+facet_wrap(~on_goal)+scale_y_log10()
+
+# Your code here!
+
+```
+
+Recipes package is pipeable sequences of feature engineering
+Statistical parameters for steps can be estimated from inital data set and applied to other data sets
+
+make sure you are doing the right thing at the right time
+
+## A first recipe
+gets ahold of what type of data and what role it has (predictor or outcome)
+```{r}
+nhl_rec <- 
+  recipe(on_goal ~ ., data = nhl_train)
+summary(nhl_rec)
+```
+
+## A basic recipe
+step_dummy- make factors into dummy variables
+step zv - take out columns with zero variance
+step normalize - normalize numeric predictors mean and sd, including dummy variables
+step_corr - reduce dimensionality by removing ones highly correlated to each other
+step_pca- get principal components
+embed::step_umap -fancy machine learning supervised dimension reduction technique
+step_ns- natural spline 
+
+
+
+```{r}
+nhl_rec <- 
+  recipe(on_goal ~ ., data = nhl_train) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_numeric_predictors())
+```
+
+## Other possible steps
+
+```{r}
+# Reduce correlation 
+nhl_rec <- 
+  recipe(on_goal ~ ., data = nhl_train) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_corr(all_numeric_predictors(), threshold = 0.9)
+
+# PCA feature extraction
+nhl_rec <- 
+  recipe(on_goal ~ ., data = nhl_train) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_pca(all_numeric_predictors())
+
+# Supervised and unsupervised uniform manifold approximation and projection (UMAP)
+library(embed)
+nhl_rec <- 
+  recipe(on_goal ~ ., data = nhl_train) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  embed::step_umap(all_numeric_predictors(), outcome = on_goal)
+
+# Natural splines
+nhl_rec <- 
+  recipe(on_goal ~ ., data = nhl_train) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_ns(coord_y, coord_x, deg_free = 10)
+```
+
+## Your turn
+
+Create a `recipe()` for the on-goal data to :
+
+-   create one-hot indicator variables
+-   remove zero-variance variables
+
+```{r}
+# Your code here!
+nhl_rec <- 
+  recipe(on_goal ~ ., data = nhl_train) %>% 
+  step_dummy(all_nominal_predictors(),one_hot = TRUE) %>% 
+  step_zv(all_predictors())
+```
+
+## Minimal recipe 
+
+```{r}
+nhl_indicators <-
+  recipe(on_goal ~ ., data = nhl_train) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_zv(all_predictors())%>%
+  step_lincomb(all_predictors())
+```
+
+## Using a workflow
+
+```{r}
+set.seed(9)
+
+nhl_glm_wflow <-
+  workflow() %>%
+  add_recipe(nhl_indicators) %>%
+  add_model(logistic_reg())
+ 
+ctrl <- control_resamples(save_pred = TRUE)
+nhl_glm_res <-
+  nhl_glm_wflow %>%
+  fit_resamples(nhl_val, control = ctrl)
+
+collect_metrics(nhl_glm_res)
+```
+
+## Your turn
+
+Use `fit_resamples()` to fit your workflow with a recipe.
+
+Collect the predictions from the results.
+
+```{r}
+# Your code here!
+collect_predictions(nhl_glm_res)
+```
+
+## Holdout predictions
+
+```{r}
+# Since we used `save_pred = TRUE`
+glm_val_pred <- collect_predictions(nhl_glm_res)
+glm_val_pred %>% slice(1:7)
+```
+
+
+Two class data, one class is event, such as shot on goal
+sensitivity- true positive rate (accuracy on actual events)
+specificity - true negative rate (accurancy on actual non-events, or 1-false positive rate)
+
+sensitivy goes down when you increase threshold but specifity goes up
+
+
+## ROC curves
+calculate sensitivy and specifcity for all possible thresholds
+
+Area under curve roc_auc
+actual curve roc_curve
+
+there are multiclass versions
+
+```{r}
+# Assumes _first_ factor level is event; there are options to change that
+roc_curve_points <- glm_val_pred %>% roc_curve(truth = on_goal, estimate = .pred_yes)
+roc_curve_points %>% slice(1, 50, 100)
+
+glm_val_pred %>% roc_auc(truth = on_goal, estimate = .pred_yes)
+```
+
+## ROC curve plot 
+
+```{r}
+autoplot(roc_curve_points)
+```
+
+## Your turn
+
+Compute and plot an ROC curve for your current model.
+
+```{r}
+# Your code here!
+roc_curve_points <- glm_val_pred %>% roc_curve(truth = on_goal, estimate = .pred_yes)
+autoplot(roc_curve_points)
+ggplot(roc_curve_points,aes(sensitivity,1-specificity))+geom_line()
+```
+
+## Your turn
+
+What data is being used for this ROC curve plot?
+
+## Player effects
+
+
+feature hashing
+use effect encoding to replace player column with the estimated effect of that predictor
+
+lencode mixed to do the estimate, could also use lencode mixed bayes
+needs to be done before dummy otherwise player won't exist anymore
+```{r}
+library(embed)
+
+nhl_effect_rec <-
+  recipe(on_goal ~ ., data = nhl_train) %>%
+  step_lencode_mixed(player, outcome = vars(on_goal)) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_zv(all_predictors())
+```
+
+step_other could also be used
+step_nzv
+
+## Effect encoding results
+
+```{r}
+
+nhl_effect_wflow <-
+  nhl_glm_wflow %>%
+  update_recipe(nhl_effect_rec)
+
+nhl_effect_res <-
+  nhl_effect_wflow %>%
+  fit_resamples(nhl_val)
+
+collect_metrics(nhl_effect_res)
+```
+
+## Where is the shot coming from?
+feature engineering
+step_mutate can be anything seems to behave similar to mutate
+
+```{r}
+# angle
+nhl_angle_rec <-
+  nhl_indicators %>%
+  step_mutate(
+    angle = abs(atan2(abs(coord_y), (89 - abs(coord_x))) * (180 / pi))
+  )
+
+# distance
+nhl_distance_rec <-
+  nhl_angle_rec %>%
+  step_mutate(
+    distance = sqrt((89 - abs(coord_x))^2 + abs(coord_y)^2),
+    distance = log(distance)
+  )
+
+# behind goal line
+nhl_behind_rec <-
+  nhl_distance_rec %>%
+  step_mutate(
+    behind_goal_line = ifelse(abs(coord_x) >= 89, 1, 0)
+  )
+```
+
+## Fit different recipes
+
+```{r}
+set.seed(9)
+
+nhl_glm_set_res <-
+  workflow_set(
+    list(`1_dummy` = nhl_indicators, `2_angle` = nhl_angle_rec, 
+         `3_dist` = nhl_distance_rec, `4_bgl` = nhl_behind_rec),
+    list(logistic = logistic_reg())
+  ) %>%
+  workflow_map(fn = "fit_resamples", resamples = nhl_val, verbose = TRUE, control = ctrl)
+```
+
+## Your turn
+
+Create a workflow set with 2 or 3 recipes.
+
+(Consider using recipes we've already created.)
+
+Use `workflow_map()` to resample the workflow set.
+
+```{r}
+# Your code here!
+collect_metrics(nhl_glm_set_res)
+```
+
+## Compare recipes
+
+```{r}
+library(forcats)
+
+collect_metrics(nhl_glm_set_res) %>%
+  filter(.metric == "roc_auc") %>%
+  mutate(
+    features = gsub("_logistic", "", wflow_id), 
+    features = fct_reorder(features, mean)
+  ) %>%
+  ggplot(aes(x = mean, y = features)) +
+  geom_point(size = 3) +
+  labs(y = NULL, x = "ROC AUC (validation set)")
+
+
+#to see processed version of things
+
+fitted_rec<-nhl_effect_rec%>%prep()
+fitted_rec%>%bake(new_data=nhl_train)
+tidy()
+```
+
+can be estimated manually with a function called prep() it is analogous to fit
+
+bake() is analoous to predict() and gives you the processed data back
+
+
+# PART 2 AFTER LUNCH
+
+---
+title: "3 - Tuning Hyperparameters - Classwork"
+subtitle: "Machine learning with tidymodels"
+editor_options: 
+  chunk_output_type: console
+---
+
+We recommend restarting R between each slide deck!
+
+## Setup
+
+Setup from deck 5
+Example of tuning parameters you can't just know:
+tree depth
+number of neighbors in a k nearest neighbor model
+
+can try different values and measure their performance
+find good values for these parameters
+finalize workflow/model
+
+two main stratefies:
+grid search
+iterative search
+
+
+```{r}
+library(tidymodels)
+library(embed)
+library(ongoal)
+
+tidymodels_prefer()
+
+set.seed(23)
+nhl_split <- initial_split(season_2015, prop = 3/4)
+nhl_split
+
+nhl_train_and_val <- training(nhl_split)
+nhl_test  <- testing(nhl_split)
+
+set.seed(234)
+nhl_val <- validation_split(nhl_train_and_val, prop = 0.80)
+
+nhl_train <- analysis(nhl_val$splits[[1]])
+
+nhl_distance_rec <-
+  recipe(on_goal ~ ., data = nhl_train) %>%
+  step_lencode_mixed(player, outcome = vars(on_goal)) %>%
+  step_other(all_nominal_predictors()) %>% # TODO: keep this?
+  step_dummy(all_nominal_predictors()) %>%
+  step_zv(all_predictors()) %>%
+  step_mutate(
+    angle = abs(atan2(abs(coord_y), (89 - abs(coord_x))) * (180 / pi)),
+    distance = sqrt((89 - abs(coord_x))^2 + abs(coord_y)^2),
+    distance = log(distance)
+  )
+
+nhl_distance_wflow <-
+  workflow() %>%
+  add_recipe(nhl_distance_rec) %>%
+  add_model(logistic_reg())
+
+nhl_distance_res <-
+  nhl_distance_wflow %>%
+  fit_resamples(nhl_val)
+```
+
+## Updates for tuning
+
+```{r}
+glm_rec <-
+  recipe(on_goal ~ ., data = nhl_train) %>%
+  step_lencode_mixed(player, outcome = vars(on_goal)) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_mutate(
+    angle = abs(atan2(abs(coord_y), (89 - abs(coord_x))) * (180 / pi)),
+    distance = sqrt((89 - abs(coord_x))^2 + abs(coord_y)^2),
+    distance = log(distance),
+    behind_goal_line = ifelse(abs(coord_x) >= 89, 1, 0)
+  ) %>%
+  step_rm(coord_x, coord_y) %>%
+  step_zv(all_predictors()) %>%
+  step_ns(angle, deg_free = tune("angle")) %>%
+  step_ns(distance, deg_free = tune("distance")) %>%
+  step_normalize(all_numeric_predictors())
+
+glm_spline_wflow <-
+  workflow() %>%
+  add_model(logistic_reg()) %>%
+  add_recipe(glm_rec)
+```
+
+## Create a grid
+extract parameter set dials finds good ranges based on parameter
+grid latin hypercube is a space filling design to fill the grid
+
+```{r}
+set.seed(2)
+grid <- 
+  glm_spline_wflow %>% 
+  #extract_parameter_set_dials() %>% 
+  grid_latin_hypercube(size = 25)
+```
+
+## Your turn
+
+Create a grid for our tunable workflow.
+
+Try creating a regular grid.
+
+```{r}
+# Your code here!
+grid <- 
+  glm_spline_wflow %>% 
+  extract_parameter_set_dials() %>% 
+  grid_regular(levels = 10)
+
+grid_latin_hypercube
+```
+
+## Update parameter ranges
+
+```{r}
+set.seed(2)
+grid <- 
+  glm_spline_wflow %>% 
+  extract_parameter_set_dials() %>% 
+  update(angle = spline_degree(c(2L, 20L)),
+         distance = spline_degree(c(2L, 20L))) %>% 
+  grid_latin_hypercube(size = 25)
+
+grid %>% 
+  ggplot(aes(angle, distance)) +
+  geom_point(size = 4)
+```
+
+## Spline grid search
+
+```{r} 
+set.seed(9)
+ctrl <- control_grid(save_pred = TRUE, parallel_over = "everything")
+
+glm_spline_res <-
+  glm_spline_wflow %>%
+  tune_grid(resamples = nhl_val, grid = grid, control = ctrl)
+glm_spline_res
+```
+
+## Your turn
+
+Tune our `glm_wflow`.
+
+What happens if you don't supply a `grid` argument to `tune_grid()`?
+
+can set summarize= false in collect metrics if doing aggregate to get the folds.
+
+select_best
+show_best
+select_by_pct_loss()
+```{r}
+# Your code here!
+glm_spline_res2 <-
+  glm_spline_wflow %>%
+  tune_grid(resamples = nhl_val, control = ctrl)
+glm_spline_res
+```
+
+## Grid results
+
+```{r}
+autoplot(glm_spline_res)
+```
+
+## Tuning results
+
+```{r}
+collect_metrics(glm_spline_res)
+collect_metrics(glm_spline_res, summarize = FALSE)
+```
+
+## Choose a parameter combination
+
+```{r}
+show_best(glm_spline_res, metric = "roc_auc")
+select_best(glm_spline_res, metric = "roc_auc")
+```
+
+## Your turn
+
+Try an alternative selection strategy.
+
+Read the docs for `select_by_pct_loss()`.
+
+Try choosing a model that has a simpler (less "wiggly") relationship for `distance`.
+
+```{r}
+# Your code here!
+select_by_pct_loss(glm_spline_res,distance)
+```
+
+## Boosted trees
+usually the best for tabular data
+ensemble many decision tree models
+each tree dependent on the one before and tries to compensate for any poor results
+lots of tuning parameters
+more data centric flavor
+early stopping -stop boosting whena  few interations produce consecutively worse results
+usually smaller than random forest for deployment and better performance
+
+
+argument has been bassed to engine, validation
+
+appendix in tidy modeling with R, to know what kind of preprocessing you need to do for what model
+```{r}
+xgb_spec <-
+  boost_tree(
+    trees = 500, min_n = tune(), stop_iter = tune(), tree_depth = tune(),
+    learn_rate = tune(), loss_reduction = tune()
+  ) %>%
+  set_mode("classification") %>% 
+  set_engine("xgboost", validation = 1/10) # <- for better early stopping
+
+xgb_rec <- 
+  recipe(on_goal ~ ., data = nhl_train) %>% 
+  step_lencode_mixed(player, outcome = vars(on_goal)) %>% 
+  step_dummy(all_nominal_predictors(),one_hot = TRUE) %>%
+  step_zv(all_predictors())
+
+xgb_wflow <- 
+  workflow() %>% 
+  add_model(xgb_spec) %>% 
+  add_recipe(xgb_rec)
+```
+
+## Your turn
+
+Create your boosted tree workflow.
+
+```{r}
+# Your code here!
+
+xgb_rec <- 
+  recipe(on_goal ~ ., data = nhl_train) %>% 
+  step_lencode_mixed(player, outcome = vars(on_goal)) %>% 
+  step_dummy(all_nominal_predictors(),one_hot = TRUE) %>%
+  step_zv(all_predictors())
+
+xgb_wflow <- 
+  workflow() %>% 
+  add_model(xgb_spec) %>% 
+  add_recipe(xgb_rec)
+```
+
+## Running in parallel
+
+```{r}
+cores <- parallelly::availableCores()
+cl <- parallel::makePSOCKcluster(cores)
+doParallel::registerDoParallel(cl)
+```
+
+## Tuning
+
+```{r}
+# this will take some time to run
+set.seed(9)
+
+xgb_res <-
+  xgb_wflow %>%
+  tune_grid(resamples = nhl_val, grid = 15, control = ctrl) # automatic grid now!
+```
+
+## Your turn 
+
+Start tuning the boosted tree model!
+
+We won't wait for everyone's tuning to finish, but take this time to get it started before we move on.
+
+```{r}
+# Your code here!
+
+```
+
+## Tuning results
+
+```{r}
+xgb_res
+
+autoplot(xgb_res)
+```
+
+## Again with the location features
+
+```{r}
+coord_rec <- 
+  xgb_rec %>%
+  step_mutate(
+    angle = abs(atan2(abs(coord_y), (89 - abs(coord_x))) * (180 / pi)),
+    distance = sqrt((89 - abs(coord_x))^2 + abs(coord_y)^2),
+    distance = log(distance),
+    behind_goal_line = ifelse(abs(coord_x) >= 89, 1, 0)
+  ) %>% 
+  step_rm(coord_x, coord_y)
+
+xgb_coord_wflow <- 
+  workflow() %>% 
+  add_model(xgb_spec) %>% 
+  add_recipe(coord_rec)
+
+set.seed(9)
+xgb_coord_res <-
+  xgb_coord_wflow %>%
+  tune_grid(resamples = nhl_val, grid = 20, control = ctrl)
+```
+
+## Did the machine figure it out? 
+
+```{r}
+show_best(xgb_res, metric = "roc_auc")
+show_best(xgb_coord_res, metric = "roc_auc")
+```
+
+## Compare models
+
+```{r}
+# Best logistic regression results
+glm_spline_res %>% 
+  show_best(metric = "roc_auc", n = 1) %>% 
+  select(.metric, .estimator, mean, n, std_err, .config)
+```
+
+```{r}
+# Best boosting results
+xgb_coord_res %>% 
+  show_best(metric = "roc_auc", n = 1) %>% 
+  select(.metric, .estimator, mean, n, std_err, .config)
+```
+
+## Your turn
+
+Can you get better ROC results with xgboost?
+
+Try increasing `learn_rate` beyond the original range.
+
+```{r}
+# Your code here!
+xgb_spec_new <-
+   boost_tree(
+    trees = 500,
+    learn_rate = tune()
+  ) %>%
+  set_mode("classification") %>% 
+  set_engine("xgboost", validation = 1/10) # <- for better early stopping
+
+
+
+```
+
+## Updating the workflow
+
+```{r}
+best_auc <- select_best(glm_spline_res, metric = "roc_auc")
+best_auc
+
+glm_spline_wflow <-
+  glm_spline_wflow %>% 
+  finalize_workflow(best_auc)
+
+glm_spline_wflow
+```
+
+## The final fit 
+
+```{r}
+test_res <- 
+  glm_spline_wflow %>% 
+  last_fit(split = nhl_split)
+
+test_res
+
+collect_metrics(test_res)
+```
+
+## Your turn 
+
+Finalize your workflow with the best parameters.
+
+Create a final fit.
+
+```{r}
+# Your code here!
+
+```
+
+## Estimates of ROC AUC
+
+```{r}
+# Validation results from tuning
+glm_spline_res %>% 
+  show_best(metric = "roc_auc", n = 1) %>% 
+  select(.metric, mean, n, std_err)
+
+# Test set results
+test_res %>% collect_metrics()
+```
+
+## Final fitted workflow
+
+```{r}
+final_glm_spline_wflow <- 
+  test_res %>% 
+  extract_workflow()
+
+# use this object to predict or deploy
+predict(final_glm_spline_wflow, nhl_test[1:3,])
+```
+
+## Explain yourself
+
+Create an explainer for our glm model.
+
+```{r}
+library(DALEXtra)
+
+glm_explainer <- explain_tidymodels(
+  final_glm_spline_wflow,
+  data = dplyr::select(nhl_train, -on_goal),
+  # DALEX required an integer for factors:
+  y = as.integer(nhl_train$on_goal),
+  verbose = FALSE
+)
+```
+
+Create partial dependence profiles
+
+https://ema.drwhy.ai/partialDependenceProfiles.html
+
+```{r}
+set.seed(123)
+pdp_coord_x <- model_profile(
+  glm_explainer,
+  variables = "coord_x",
+  N = 500,
+  groups = "position"
+)
+```
+
+## Your turn 
+
+Try grouping by another variable, like `game_type` or `dow`.
+
+```{r}
+# Your code here!
+
+```
+
+
+```{r}
+# turn off parallel backend
+foreach::registerDoSEQ()
+parallel::stopCluster(cl)
+```

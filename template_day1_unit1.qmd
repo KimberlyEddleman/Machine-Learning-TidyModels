@@ -1,0 +1,790 @@
+---
+title: "2 - Your data budget - Classwork"
+subtitle: "Machine learning with tidymodels"
+editor_options: 
+  chunk_output_type: console
+---
+
+We recommend restarting R between each slide deck!
+
+## Data on tree frog hatching
+
+```{r}
+library(tidymodels)
+
+data("tree_frogs", package = "stacks")
+
+# Slightly modify the original data for the purposes of this workshop
+tree_frogs <- tree_frogs %>%
+  mutate(t_o_d = factor(t_o_d),
+         age = age / 86400) %>%
+  filter(!is.na(latency)) %>%
+  select(-c(clutch, hatched))
+```
+
+```{r}
+tree_frogs
+```
+
+## Your turn
+
+When is a good time to split your data?
+
+## Data splitting and spending
+
+```{r}
+set.seed(123)
+
+# Split into training/testing, stratifying by `latency`
+frog_split <- initial_split(tree_frogs, strata = latency)
+frog_split
+```
+
+Extract the training and testing sets
+
+```{r}
+frog_train <- training(frog_split)
+frog_test <- testing(frog_split)
+```
+
+## Your turn
+
+Split your data so 20% is held out for the test set.
+
+Try out different values in `set.seed()` to see how the results change.
+
+Hint: Which argument in `initial_split()` handles the proportion split into training vs testing?
+
+```{r}
+# Your code here!
+
+```
+
+## Your turn
+
+Explore the `frog_train` data on your own!
+
+- What's the distribution of the outcome, latency?
+- What's the distribution of numeric variables like age?
+- How does latency differ across the categorical variables?
+
+```{r}
+# Your code here!
+
+```
+
+## Stratification
+
+```{r}
+set.seed(123)
+
+frog_split <- initial_split(tree_frogs, prop = 0.8, strata = latency)
+frog_train <- training(frog_split)
+frog_test <- testing(frog_split)
+
+```
+Very safe choice to do stratification
+
+
+
+# SESSION 2
+
+
+---
+title: "3 - What makes a model? - Classwork"
+subtitle: "Machine learning with tidymodels"
+editor_options: 
+  chunk_output_type: console
+---
+
+We recommend restarting R between each slide deck!
+
+## Setup
+
+Setup from deck 2
+
+```{r}
+library(tidymodels)
+
+data("tree_frogs", package = "stacks")
+
+tree_frogs <- tree_frogs %>%
+  mutate(t_o_d = factor(t_o_d),
+         age = age / 86400) %>%
+  filter(!is.na(latency)) %>%
+  select(-c(clutch, hatched))
+
+set.seed(123)
+
+frog_split <- initial_split(tree_frogs, prop = 0.8, strata = latency)
+frog_train <- training(frog_split)
+frog_test <- testing(frog_split)
+```
+
+## Your turn
+
+How do you fit a linear model in R?
+lm- linear model
+glm - generalized linear model, logistic regression
+glmnet -regularized regression
+keras- tensorflow
+stan- baysian regression
+spark - large datasets
+
+How many different ways can you think of?
+
+Discuss with your neighbor!
+
+Tidymodels provides unified interface for many different models, connects you to all those models
+
+
+## To specify a model
+1. Choose a model
+2. Specify an engine
+3. Set the mode
+This part is all about specifying the model, you do this before you do the estimation/fitting
+separation to enforce better practices
+https://www.tidymodels.org/find/parsnip/
+
+different engines are different implementations, sometimes same thing in different sw, sometimes different engines because doing kind of estimation but in different ways (ex lm, ordinary least squares vs stan, uses baysiean methods)
+
+```{r}
+
+# Model
+#Models have a default engine
+linear_reg()
+
+# Engine
+linear_reg() %>%
+  set_engine("glmnet")
+
+# Mode - Some models have a default mode, others don't
+decision_tree() %>% 
+  set_mode("regression")
+```
+
+## Your turn
+
+Edit the chunk below to use a different model!
+
+spec naming assignment helps make it obvious its a model specification, not anything fit yet.
+```{r tree_spec}
+tree_spec <- decision_tree() %>% 
+  set_mode("regression")
+
+lin_spec<-linear_reg()%>%set_engine("glm")
+
+log_spec<-logistic_reg()
+
+tree_spec
+```
+
+
+## A model workflow
+Linear regression minimize the mean squared error
+Decision tree is series of if then splits
+
+Model workflow- a way to stick together things that need to go together to carry around in a useful way
+stickes together model preprosseor and model specification
+
+
+Why workflow?
+Handle new data better, such as new factor levels
+can use other preprocessors besides formulas
+captures the whole scope of modeling process
+
+
+
+```{r}
+tree_spec <-
+  decision_tree() %>% 
+  set_mode("regression")
+```
+
+Fit with parsnip:
+
+```{r}
+tree_spec %>% 
+  fit(latency ~ ., data = frog_train) 
+```
+
+Fit with a workflow:
+
+bundle together workflow and preprocessor
+```{r}
+workflow() %>%
+  add_formula(latency ~ .) %>%
+  add_model(tree_spec) %>%
+  fit(data = frog_train) 
+```
+
+"Shortcut" by specifying the preprocessor and model spec directly in the `workflow()` call:
+
+```{r}
+workflow(latency ~ ., tree_spec) %>% 
+  fit(data = frog_train) 
+```
+
+## Your turn
+
+This is how you'd fit a decision model:
+
+```{r tree_wflow}
+tree_spec <-
+  decision_tree() %>% 
+  set_mode("regression")
+
+tree_wflow <- workflow() %>%
+  add_formula(latency ~ .) %>%
+  add_model(tree_spec)
+
+tree_wflow
+
+
+
+lm_spec <-
+  linear_reg() %>% 
+  set_mode("regression")
+
+lm_wflow <- workflow() %>%
+  add_formula(latency ~ .) %>%
+  add_model(lm_spec)
+  
+lm_fit<-fit(lm_wflow,data = frog_train) 
+
+lm_fit
+```
+
+Now use a similar approach to fit a linear model! Call it `lm_wflow`.
+
+```{r}
+### Your code here
+
+```
+
+## Predict with your model
+
+```{r}
+tree_spec <-
+  decision_tree() %>% 
+  set_mode("regression")
+
+tree_fit <-
+  workflow(latency ~ ., tree_spec) %>% 
+  fit(data = frog_train%>%mutate_if(is.character,as.factor)) 
+```
+
+## Your turn
+
+What do you get from running the following code? What do you notice about the structure of the result?
+
+```{r}
+vals<-predict(tree_fit, new_data = frog_test)
+```
+
+## Your turn
+.workflow in help page
+
+What do you get from running the following code? How is `augment()` different from `predict()`?
+
+```{r}
+augment(tree_fit, new_data = frog_test)
+```
+
+## Understand your model
+Extracting stuff out of it 
+fitted workflow object
+www.tmwr.org/explain.html
+
+
+```{r}
+library(rpart.plot)
+
+tree_fit %>%
+  extract_fit_engine() %>%
+  rpart.plot(roundint = FALSE)
+```
+
+## Your turn
+
+Try extracting the model engine object from your fitted linear workflow, `lm_wflow`.
+
+call predict on the fitted workflow
+
+```{r}
+### Your code here
+extraction<-lm_fit%>%extract_fit_engine()
+plot(extraction)
+#plot(lm_fit)
+#resid
+#summary
+#ggfortify autoplot
+```
+
+What kind of object is it? What can you do with it?
+
+⚠️ Never `predict()` with any extracted components!
+
+You can also read the documentation for object extraction:
+https://workflows.tidymodels.org/reference/extract-workflow.html
+
+## Your turn
+Deploy models
+need to version model
+deploy model
+monitor model
+Vetiver
+contains info you need to actually deploy a model
+
+Explore how you might deploy your `tree_fit` model using vetiver.
+
+```{r vetiver}
+library(vetiver)
+library(plumber)
+
+# Create a vetiver model object
+v <- vetiver_model(tree_fit, "frog_hatching")
+v
+```
+
+```{r}
+# Create a predictable Plumber API
+pr <- pr() %>%
+  vetiver_api(v)
+
+pr
+```
+
+```{r}
+# Run the API server in a new window
+pr_run(pr)
+```
+
+
+
+#SESSION 3
+
+
+---
+title: "4 - Evaluating models - Classwork"
+subtitle: "Machine learning with tidymodels"
+editor_options: 
+  chunk_output_type: console
+---
+
+We recommend restarting R between each slide deck!
+
+## Setup
+Yardstick has a lot of metric functions
+Setup from deck 3
+
+```{r}
+library(tidymodels)
+
+data("tree_frogs", package = "stacks")
+
+tree_frogs <- tree_frogs %>%
+  mutate(t_o_d = factor(t_o_d),
+         age = age / 86400) %>% 
+  filter(!is.na(latency)) %>%
+  select(-c(clutch, hatched))
+
+set.seed(123)
+
+frog_split <- initial_split(tree_frogs, prop = 0.8, strata = latency)
+frog_train <- training(frog_split)
+frog_test <- testing(frog_split)
+
+tree_spec <- decision_tree(cost_complexity = 0.001, mode = "regression")
+tree_wflow <- workflow(latency ~ ., tree_spec)
+tree_fit <- fit(tree_wflow, frog_train)
+```
+
+## Metrics for model performance
+
+`metrics()` returns a standard set of metrics
+
+```{r}
+augment(tree_fit, new_data = frog_test) %>%
+  metrics(latency, .pred)
+```
+
+Or you can use individual metric functions
+
+```{r}
+augment(tree_fit, new_data = frog_test) %>%
+  rmse(latency, .pred)
+```
+
+All yardstick metric functions work with grouped data frames!
+
+```{r}
+augment(tree_fit, new_data = frog_test) %>%
+  group_by(reflex) %>%
+  rmse(latency, .pred)
+```
+
+Metric sets are a way to combine multiple similar metric functions together into a new function.
+
+```{r}
+frog_metrics <- metric_set(rmse, msd)
+
+augment(tree_fit, new_data = frog_test) %>%
+  frog_metrics(latency, .pred)
+```
+
+## Dangers of overfitting
+
+Repredicting the training set, bad!
+
+```{r}
+tree_fit %>%
+  augment(frog_train)
+```
+
+"Resubstitution estimate" - This should be the best possible performance that you could ever achieve, but it can be very misleading!
+
+```{r}
+tree_fit %>%
+  augment(frog_train) %>%
+  rmse(latency, .pred)
+```
+
+Now on the test set, see that it performs worse? This is closer to "real" performance.
+
+```{r}
+tree_fit %>%
+  augment(frog_test) %>%
+  rmse(latency, .pred)
+```
+
+## Your turn
+
+Use `augment()` and `metrics()` to compute a regression metric like `mae()`.
+
+Compute the metrics for both training and testing data.
+
+Notice the evidence of overfitting! ⚠️
+
+```{r}
+# Your code here!
+tree_fit%>%augment(frog_test)%>%mae(latency,.pred)
+tree_fit%>%augment(frog_train)%>%mae(latency,.pred)
+# Use `augment()` and `metrics()` with `tree_fit`
+
+tree_fit%>%augment(frog_test)%>%metrics(latency,.pred)
+tree_fit%>%augment(frog_train)%>%metrics(latency,.pred)
+tree_fit
+```
+
+Cross validation- allows you to mark individual training points as part of a particular assesment set
+
+
+## Your turn
+
+If we use 10 folds, what percent of the training data:
+
+- ends up in analysis? 90%
+- ends up in assessment? 10%
+
+for each fold
+
+## Resampling
+
+```{r}
+# v = 10 is the default
+vfold_cv(frog_train)
+```
+
+What is in a resampling result?
+
+```{r}
+frog_folds <- vfold_cv(frog_train, v = 10)
+
+# Individual splits of analysis/assessment data
+frog_folds$splits[1:3]
+```
+
+Stratification often helps, with very little downside
+
+```{r}
+vfold_cv(frog_train, strata = latency)
+```
+
+We'll use this setup:
+
+```{r}
+set.seed(123)
+frog_folds <- vfold_cv(frog_train, v = 10, strata = latency)
+frog_folds
+```
+
+## Evaluating model performance
+
+```{r}
+# Fit the workflow on each analysis set,
+# then compute performance on each assessment set
+tree_res <- fit_resamples(tree_wflow, frog_folds)
+tree_res
+```
+
+Aggregate metrics
+Use left hand of split to make each model and the assment to compute the metrics,
+10 different models, this helps to determine what type of model to actually use
+```{r}
+tree_res %>%
+  collect_metrics()
+```
+
+If you want to analyze the assessment set (i.e. holdout) predictions, then you need to adjust the control object and tell it to save them:
+
+```{r}
+# Save the assessment set results
+ctrl_frog <- control_resamples(save_pred = TRUE)
+
+tree_res <- fit_resamples(tree_wflow, frog_folds, control = ctrl_frog)
+
+tree_preds <- collect_predictions(tree_res)
+tree_preds
+```
+
+```{r}
+tree_preds %>% 
+  ggplot(aes(latency, .pred, color = id)) + 
+  geom_abline(lty = 2, col = "gray", size = 1.5) +
+  geom_point(alpha = 0.5) +
+  coord_obs_pred()
+```
+
+## Bootstrapping
+pull with replacement
+anything not pulled is in the performance data
+```{r}
+set.seed(3214)
+bootstraps(frog_train)
+```
+
+## Your turn
+
+Create:
+
+- Bootstrap folds (change `times` from its default!)
+- A validation resample (what function is used for this?)
+
+https://rsample.tidymodels.org/reference/index.html
+
+Don't forget to set a seed when you resample!
+
+```{r}
+# Your code here!
+set.seed(123)
+ex_boot<-bootstraps(frog_train,times=40)
+val_split<-validation_split(frog_train,strata=latency)
+
+tree_res <- fit_resamples(tree_wflow, ex_boot)
+
+collect_metrics(tree_res)
+
+tree_res <- fit_resamples(tree_wflow, val_split)
+
+collect_metrics(tree_res)
+```
+
+## Create a random forest model
+
+```{r}
+rf_spec <- rand_forest(trees = 1000, mode = "regression")
+rf_spec
+```
+
+```{r}
+rf_wflow <- workflow(latency ~ ., rf_spec)
+
+```
+
+## Your turn
+
+Use `fit_resamples()` and `rf_wflow` to:
+
+- Keep predictions
+- Compute metrics
+- Plot true vs predicted values
+
+```{r}
+# Your code here!
+new_ctrl<-control_resamples(save_pred = TRUE)
+new_fit<-fit_resamples(rf_wflow,frog_folds,control=new_ctrl)
+collect_metrics(new_fit)
+pred2<-collect_predictions(new_fit)
+collect_predictions(new_fit) %>%
+  ggplot(aes(latency, .pred,color=id)) + 
+  geom_abline(lty = 2, col = "deeppink4", size = 1.5) +
+  geom_point(alpha = 0.5) +
+  coord_obs_pred()
+
+
+new_metrics<-metric_set(rmse,rsq)
+pred2%>%new_metrics(latency,.pred)
+
+
+new_fit<-fit_resamples(rf_wflow,frog_folds,metrics=metric_set(rmse,rsq),
+                       control=new_ctrl)
+pred2<-collect_predictions(new_fit)
+```
+
+## Evaluate a workflow set
+provide a list of preprocessors and list of parsnip model specs
+
+```{r}
+wf_set <- workflow_set(list(latency ~ .), list(tree_spec, rf_spec))
+wf_set
+```
+
+```{r}
+wf_set_fit <- wf_set %>%
+  workflow_map("fit_resamples", resamples = frog_folds)
+
+wf_set_fit
+```
+
+Rank the sets of models by their aggregate metric performance
+
+```{r}
+wf_set_fit %>%
+  rank_results(rank_metric = "rsq")
+```
+
+## Your turn
+
+When do you think a workflow set would be useful?
+
+Discuss with your neighbors!
+
+## The final fit
+
+```{r}
+# `frog_split` has train + test info
+final_fit <- last_fit(rf_wflow, frog_split) 
+
+final_fit
+```
+
+Test set metrics:
+
+```{r}
+collect_metrics(final_fit)
+```
+
+Test set predictions:
+
+```{r}
+collect_predictions(final_fit)
+```
+
+```{r}
+collect_predictions(final_fit) %>%
+  ggplot(aes(latency, .pred)) + 
+  geom_abline(lty = 2, col = "deeppink4", size = 1.5) +
+  geom_point(alpha = 0.5) +
+  coord_obs_pred()
+```
+
+```{r}
+extract_workflow(final_fit)
+```
+
+## Your turn
+
+Which model do you think you would decide to use?
+
+What surprised you the most?
+
+What is one thing you are looking forward to for tomorrow?
+
+1.5 section
+
+## Building a model stack
+
+```{r}
+library(stacks)
+```
+
+For stacking, we need to save the predictions and the fitted workflow objects.
+
+```{r}
+stack_ctrl <- control_resamples(save_pred = TRUE, save_workflow = TRUE)
+```
+
+Create a linear model:
+
+```{r}
+lr_spec <- linear_reg() %>%
+  set_mode("regression")
+
+lr_res <- workflow(latency ~ ., lr_spec) %>%
+  fit_resamples(frog_folds, control = stack_ctrl)
+
+lr_res
+```
+
+And use our random forest:
+
+```{r}
+rf_res <- workflow(latency ~ ., rf_spec) %>%
+  fit_resamples(frog_folds, control = stack_ctrl)
+
+rf_res
+```
+
+Initialize a data stack and add candidate members
+
+```{r}
+frog_st <- stacks()
+
+frog_st
+
+frog_st <- frog_st %>%
+  add_candidates(lr_res) %>%
+  add_candidates(rf_res)
+
+frog_st
+```
+
+Fit a model that determines the "best" way to weight their predictions:
+
+```{r}
+frog_st_res <- frog_st %>%
+  blend_predictions()
+
+frog_st_res
+```
+
+Fit using the models with non-zero coefficients
+
+```{r}
+frog_st_res <- frog_st_res %>%
+  fit_members()
+
+frog_st_res
+```
+
+Predict on new data to get "blended" predictions
+
+```{r}
+frog_st_predictions <- frog_test %>%
+  select(latency) %>%
+  bind_cols(
+    predict(frog_st_res, frog_test)
+    )
+
+frog_st_predictions
+```
+
+```{r}
+ggplot(frog_st_predictions, aes(latency, .pred)) + 
+  geom_abline(lty = 2, 
+              col = "deeppink4", 
+              size = 1.5) +
+  geom_point(alpha = 0.5) +
+  coord_obs_pred()
+```
